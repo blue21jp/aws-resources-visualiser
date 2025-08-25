@@ -1,0 +1,103 @@
+name: Application Deployment Pipeline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  IMAGE_DEF_FILE: 'imagedefinitions.json'
+  CONTAINER_NAME: 'app'
+  ECR_REPOSITORY: 'aws-resource-visualizer'
+
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: ${{ secrets.AWS_IAM_ROLE_APP }}
+  S3BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET }}
+
+jobs:
+
+  push:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: install envsubst
+        if: github.actor == 'nektos/act'
+        run: |
+          echo "*************** DEBUG ***"
+          echo "${{ env.AWS_ROLE_ARN }}"
+          echo "${{ env.S3BUCKET_NAME }}"
+          echo "*************** DEBUG ***"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials from IAM Role
+        if: github.actor != 'nektos/act'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{env.AWS_ROLE_ARN}}
+          aws-region: ${{env.AWS_REGION}}
+
+      - name: ECR login
+        uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+        with:
+          mask-password: 'true'
+
+      - name: docker build & ECR push
+        uses: docker/build-push-action@v5
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        with:
+          push: 'true'
+          #no-cache: false
+          platforms: 'linux/amd64'
+          tags: ${{env.REGISTRY}}/${{env.ECR_REPOSITORY}}:${{github.sha}}
+
+  deploy:
+    needs: [ push ]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: install awscli
+        if: github.actor == 'nektos/act'
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+
+      - name: Configure AWS credentials from IAM Role
+        if: github.actor != 'nektos/act'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{env.AWS_ROLE_ARN}}
+          aws-region: ${{env.AWS_REGION}}
+
+      - name: ECR login
+        uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+        with:
+          mask-password: 'true'
+
+      - name: create ${{env.IMAGE_DEF_FILE}}
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+           printf '[{"name":"%s","imageUri":"%s"}]' "${{env.CONTAINER_NAME}}" "${{env.REGISTRY}}/${{env.ECR_REPOSITORY}}:${{env.IMAGE_TAG}}" > ${{env.IMAGE_DEF_FILE}}
+           echo >> ${{env.IMAGE_DEF_FILE}}
+           zip -r ./${{env.IMAGE_DEF_FILE}}.zip ${{env.IMAGE_DEF_FILE}}
+
+      - name: debug print
+        if: github.actor == 'nektos/act'
+        run: |
+          echo "*************** DEBUG ***"
+          cat ${{env.IMAGE_DEF_FILE}}
+          echo "*************** DEBUG ***"
+
+      - name: put ${{env.IMAGE_DEF_FILE}}.zip to s3
+        run: |
+          aws s3 cp ./${{env.IMAGE_DEF_FILE}}.zip "s3://${{env.S3BUCKET_NAME}}/"

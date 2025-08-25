@@ -1,0 +1,5 @@
+Parameters:
+  ContainerImage: "${DOCKER_IMAGE_NAME}:${DOCKER_TAG}"
+  TaskCpu: "512"
+  TaskMemory: "1024"
+  TaskDesiredCount: "${DESIRED_COUNT}"

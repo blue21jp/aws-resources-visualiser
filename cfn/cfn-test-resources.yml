@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Test resources - EC2, RDS, Lambda (using existing VPC, minimal security)'
+
+Mappings:
+  !Rain::Include ../rainlib/rain_inc_map_vpc_id.yml
+
+Resources:
+  # Security Groups
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${AWS::StackName}-ec2"
+      GroupDescription: Security group for test EC2 instance
+      VpcId: !FindInMap [AccountToVpcIdParams, !Ref "AWS::AccountId", VpcId]
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ec2-sg"
+        - Key: CostProject
+          Value: test-resources
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${AWS::StackName}-rds"
+      GroupDescription: Security group for test RDS instance
+      VpcId: !FindInMap [AccountToVpcIdParams, !Ref "AWS::AccountId", VpcId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: Allow MySQL access from EC2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-sg"
+        - Key: CostProject
+          Value: test-resources
+
+  # EC2 IAM Role for Session Manager
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ec2-session-manager-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ec2-role"
+        - Key: CostProject
+          Value: test-resources
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # EC2 Instance (t3.micro, no key pair)
+  TestEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.micro
+      SubnetId: !FindInMap [AccountToVpcIdParams, !Ref "AWS::AccountId", PublicSubnetId1]
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd mysql
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Test EC2 Instance</h1><p>Access via Session Manager</p><p>MySQL client installed</p>" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ec2-instance"
+        - Key: CostProject
+          Value: test-resources
+
+  # RDS Secret (random password generation)
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-rds-password"
+      Description: Test RDS MySQL password
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-secret"
+        - Key: CostProject
+          Value: test-resources
+
+  # RDS Subnet Group (using existing subnets)
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for test RDS instance
+      SubnetIds:
+        - !FindInMap [AccountToVpcIdParams, !Ref "AWS::AccountId", PublicSubnetId1]
+        - !FindInMap [AccountToVpcIdParams, !Ref "AWS::AccountId", PublicSubnetId2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-subnet-group"
+        - Key: CostProject
+          Value: test-resources
+
+  # RDS Instance (db.t3.micro MySQL)
+  TestRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "${AWS::StackName}-mysql-db"
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: '8.0.39'
+      AllocatedStorage: 20
+      StorageType: gp2
+      MasterUsername: !Sub '{{resolve:secretsmanager:${RDSSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${RDSSecret}:SecretString:password}}'
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 0
+      MultiAZ: false
+      PubliclyAccessible: false
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-instance"
+        - Key: CostProject
+          Value: test-resources
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-lambda-execution-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-lambda-role"
+        - Key: CostProject
+          Value: test-resources
+
+  # Lambda Function
+  TestLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-lambda-function"
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'message': 'Hello from test Lambda function!',
+                      'event': event,
+                      'aws_request_id': context.aws_request_id
+                  })
+              }
+      Timeout: 30
+      MemorySize: 128
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-lambda-function"
+        - Key: CostProject
+          Value: test-resources
+
+  # CloudWatch Log Group for Lambda
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${TestLambdaFunction}'
+      RetentionInDays: 7

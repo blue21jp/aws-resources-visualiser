@@ -1,0 +1,6 @@
+Tags:
+  author: blue21
+  cfn-template: /aws-resources-visualiser/cfn/${RAIN_CFN_YML}
+  provider: rain.mk
+  AppManagerCFNStackKey: aws-resources-visualiser
+  CostProject: blue21

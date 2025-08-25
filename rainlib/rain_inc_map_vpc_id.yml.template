@@ -1,0 +1,11 @@
+#
+# NOTE:
+# - ECSが起動するVPCとSubnetを指定すること
+# - ECSへアクセス許可するIPアドレスを記載したPrefixListを指定すること
+#
+AccountToVpcIdParams:
+  "0123456789012":
+    VpcId: vpc-123
+    PublicSubnetId1: subnet-123
+    PublicSubnetId2: subnet-123
+    PrefixListSafePublicId: pl-123

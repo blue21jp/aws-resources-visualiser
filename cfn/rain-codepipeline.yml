@@ -1,0 +1,4 @@
+Parameters:
+  EcsClusterName: "${ECS_CLUSTER_NAME}"
+  EcsServiceName: "${ECS_SERVICE_NAME}"
+  FilePrefix: "imagedefinitions"

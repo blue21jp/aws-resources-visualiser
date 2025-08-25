@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Chatbot Slack Channel Configuration for CodePipeline notifications
+
+Mappings:
+  !Rain::Include ../rainlib/rain_inc_map_codepipeline.yml
+
+Resources:
+  # IAM Role for Chatbot
+  ChatbotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-chatbot-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: chatbot.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSCodePipeline_ReadOnlyAccess
+      Policies:
+        - PolicyName: ChatbotNotificationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:GetTopicAttributes
+                  - sns:ListSubscriptions
+                  - sns:ListSubscriptionsByTopic
+                Resource: !Ref NotificationTopic
+
+  # SNS Topic for notifications
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-notifications
+      DisplayName: AWS Resource Visualizer Notifications
+
+  # Slack Channel Configuration
+  SlackChannelConfiguration:
+    Type: AWS::Chatbot::SlackChannelConfiguration
+    Properties:
+      ConfigurationName: !FindInMap [ AccountToParams, !Ref AWS::AccountId, ChatBotName]
+      IamRoleArn: !GetAtt ChatbotRole.Arn
+      SlackChannelId: !FindInMap [ AccountToParams, !Ref AWS::AccountId, SlackChannelId]
+      SlackWorkspaceId: !FindInMap [ AccountToParams, !Ref AWS::AccountId, SlackWorkspaceId]
+      LoggingLevel: NONE
+      SnsTopicArns:
+        - !Ref NotificationTopic
+      GuardrailPolicies:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      UserRoleRequired: false

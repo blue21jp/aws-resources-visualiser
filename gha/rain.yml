@@ -1,0 +1,162 @@
+name: ECS CloudFormation Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      rain_target:
+        description: 'Rain target to execute'
+        required: true
+        default: 'rain_lint'
+        type: choice
+        options:
+          - rain_lint
+          - rain_forecast
+          - rain_deploy
+          - rain_rm
+          - rain_diff
+          - rain_ls
+          - rain_logs
+          - rain_tree
+          - rain_info
+      ecr_tag:
+        description: 'ECR image tag to use (leave empty to use latest image)'
+        required: false
+        type: string
+      desired_count:
+        description: 'ECS service desired count (leave empty to use current setting)'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: ${{ secrets.AWS_IAM_ROLE_RAIN }}
+  AWS_PAGER: ""  # AWS CLIページャーを無効化
+
+permissions:
+  id-token: write  # OIDC認証用
+  contents: read
+
+jobs:
+  rain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: debug print
+        if: github.actor == 'nektos/act'
+        run: |
+          echo "*************** DEBUG ***"
+          echo "rain_target: ${{ github.event.inputs.rain_target }}"
+          echo "ecr_tag: ${{ github.event.inputs.ecr_tag }}"
+          echo "desired_count: ${{ github.event.inputs.desired_count }}"
+          echo "*************** DEBUG ***"
+
+      - name: install awscli
+        if: github.actor == 'nektos/act'
+        run: |
+          apt-get update && apt-get install -y gettext-base
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          just --version
+
+      - name: install rain
+        run: |
+          RAIN_VERSION=$(curl -s https://api.github.com/repos/aws-cloudformation/rain/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          curl -L "https://github.com/aws-cloudformation/rain/releases/download/${RAIN_VERSION}/rain-${RAIN_VERSION}_linux-amd64.zip" -o rain.zip
+          unzip -q rain.zip
+          chmod +x ./rain-${RAIN_VERSION}_linux-amd64/rain
+          sudo mv ./rain-${RAIN_VERSION}_linux-amd64/rain /usr/local/bin/
+          rain --version
+
+      - name: install cfn-lint
+        run: |
+          pip install cfn-lint
+          cfn-lint --version
+
+      - name: Configure AWS credentials from IAM Role
+        if: github.actor != 'nektos/act'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{env.AWS_ROLE_ARN}}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: rm profile from rain.just
+        run: |
+          sed -i 's/--profile ${RAIN_PROFILE}//g' justlib/rain.just
+
+      - name: download rainlib
+        run: |
+          just ssm-download-rainlib
+          ls -l rainlib
+
+      - name: Set ECR tag
+        run: |
+          if [ -z "${{ github.event.inputs.ecr_tag }}" ]; then
+            echo "ECR tag not specified, getting latest tag from ECR..."
+            LATEST_TAG=$(aws ecr describe-images \
+              --repository-name aws-resource-visualizer \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' \
+              --output text 2>/dev/null || echo "latest")
+            echo "DOCKER_TAG=${LATEST_TAG}" >> $GITHUB_ENV
+            echo "Using latest ECR tag: ${LATEST_TAG}"
+          else
+            echo "DOCKER_TAG=${{ github.event.inputs.ecr_tag }}" >> $GITHUB_ENV
+            echo "Using specified ECR tag: ${{ github.event.inputs.ecr_tag }}"
+          fi
+
+      - name: Set desired count
+        run: |
+          if [ -z "${{ github.event.inputs.desired_count }}" ]; then
+            echo "Desired count not specified, getting current count from ECS..."
+            CURRENT_COUNT=$(aws ecs describe-services \
+              --cluster AwsResourceVisualizer-ecs \
+              --services AwsResourceVisualizer-ecs \
+              --query 'services[0].desiredCount' \
+              --output text 2>/dev/null || echo "0")
+            echo "COUNT=${CURRENT_COUNT}" >> $GITHUB_ENV
+            echo "Using current ECS desired count: ${CURRENT_COUNT}"
+          else
+            echo "COUNT=${{ github.event.inputs.desired_count }}" >> $GITHUB_ENV
+            echo "Using specified desired count: ${{ github.event.inputs.desired_count }}"
+          fi
+
+      - name: just ecs
+        run: |
+          export RAINCMD=${{ github.event.inputs.rain_target }}
+          if [ "${RAINCMD}" = "rain_deploy" ] || [ "${RAINCMD}" = "rain_rm" ]; then
+            export RAINOPT="-y"
+          fi
+
+          (
+            echo "## just ecs"
+            echo "**Using RAINCMD**: ${RAINCMD}"
+            echo "**Using ECR tag**: ${DOCKER_TAG}"
+            echo "**Using desired count**: ${COUNT}"
+            echo ""
+            echo "<details>"
+            echo "<summary>Click to expand ecs output</summary>"
+            echo ""
+            echo '```'
+            just ecs 2>&1 | tee /tmp/ecs_output.log
+            echo '```'
+            echo "</details>"
+          ) > /tmp/summary_output.md
+
+      - name: Write Summary
+        run: |
+          echo "=== Writing to GITHUB_STEP_SUMMARY ==="
+          cat /tmp/summary_output.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Debug Summary (act only)
+        if: github.actor == 'nektos/act'
+        run: |
+          echo "*************** DEBUG ***"
+          cat /tmp/summary_output.md
+          echo "*************** DEBUG ***"

@@ -1,0 +1,71 @@
+name: Batch Processing via ECS Exec
+
+on:
+  #schedule:
+  #  # 毎日午前2時（UTC）に実行（日本時間午前11時）
+  #  - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: ${{ secrets.AWS_IAM_ROLE_BATCH }}
+  ECS_CLUSTER_NAME: AwsResourceVisualizer-ecs
+  ECS_SERVICE_NAME: AwsResourceVisualizer-ecs
+
+permissions:
+  id-token: write  # OIDC認証用
+  contents: read
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: install awscli
+        if: github.actor == 'nektos/act'
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+
+      - name: Install Session Manager Plugin
+        run: |
+          curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
+          sudo dpkg -i session-manager-plugin.deb
+          session-manager-plugin --version
+
+      - name: Configure AWS credentials from IAM Role
+        if: github.actor != 'nektos/act'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{env.AWS_ROLE_ARN}}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get running ECS task ARN
+        id: get-task
+        run: |
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --service-name ${{ env.ECS_SERVICE_NAME }} \
+            --desired-status RUNNING \
+            --query 'taskArns[0]' \
+            --output text)
+
+          if [ "$TASK_ARN" = "None" ] || [ -z "$TASK_ARN" ]; then
+            echo "Error: No running tasks found in service ${{ env.ECS_SERVICE_NAME }}"
+            exit 1
+          fi
+
+          echo "task-arn=$TASK_ARN" >> $GITHUB_OUTPUT
+          echo "Found running task: $TASK_ARN"
+
+      - name: Execute batch processing via ECS Exec
+        run: |
+          echo "Executing batch processing on task: ${{ steps.get-task.outputs.task-arn }}"
+
+          aws ecs execute-command \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --task ${{ steps.get-task.outputs.task-arn }} \
+            --container app \
+            --interactive \
+            --command "./app_batch.py --clear-cache"

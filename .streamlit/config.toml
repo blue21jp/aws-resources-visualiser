@@ -1,0 +1,61 @@
+# Streamlit Configuration File
+# AWS Resource Visualizer用設定
+
+[logger]
+# ログレベル: "error", "warning", "info", "debug"
+level = "info"
+
+# ログメッセージのフォーマット
+# %(asctime)s: タイムスタンプ
+# %(levelname)s: ログレベル
+# %(message)s: ログメッセージ
+messageFormat = "%(asctime)s [%(levelname)s] %(message)s"
+
+[server]
+# ヘッドレスモード（ブラウザ自動起動を無効化）
+# Docker/ECS環境では自動的にtrueになる
+headless = false
+
+# ポート設定
+port = 8501
+
+# CORS設定（セキュリティ強化）
+enableCORS = true
+
+# ファイルアップロード上限（MB）
+maxUploadSize = 200
+
+[client]
+# エラー詳細表示レベル
+# "full": 完全なエラー詳細を表示
+# "stacktrace": スタックトレースを表示
+# "type": エラータイプのみ表示
+# "none": 一般的なエラーメッセージのみ表示
+showErrorDetails = "full"
+
+# ツールバー表示モード
+# "auto": localhost/開発環境では開発者オプション表示
+# "developer": 常に開発者オプション表示
+# "viewer": 開発者オプション非表示
+toolbarMode = "auto"
+
+[browser]
+# 使用統計の送信（プライバシー設定）
+gatherUsageStats = false
+
+# サーバーアドレス（Docker/ECS環境では適切に設定される）
+serverAddress = "localhost"
+
+[runner]
+# マジック機能（変数の自動表示）
+magicEnabled = true
+
+# 高速再実行
+fastReruns = true
+
+[global]
+# ウィジェット状態重複警告の無効化
+disableWidgetStateDuplicationWarning = false
+
+# 直接実行時の警告表示
+showWarningOnDirectExecution = true

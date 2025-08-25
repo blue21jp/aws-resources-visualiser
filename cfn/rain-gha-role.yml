@@ -1,0 +1,2 @@
+Parameters:
+  TrustedAccountId: "${TRUST_ACCOUNT_ID}"

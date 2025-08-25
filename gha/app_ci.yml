@@ -1,0 +1,107 @@
+name: Application Quality Check
+
+on:
+  #pull_request:
+  #  branches: [ main ]
+  #push:
+  #  branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          just --version
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: '2.1.2'
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Load cached mypy
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/*.py') }}
+          restore-keys: |
+            mypy-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
+
+      - name: Install dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: |
+          just pyinstall
+
+      - name: Lint
+        run: |
+          (
+            echo "## just pylint"
+            echo "<details>"
+            echo "<summary>Click to expand pylint output</summary>"
+            echo ""
+            echo '```'
+            just pylint 2>&1 | tee /tmp/pylint_output.log
+            echo '```'
+            echo "</details>"
+          ) > /tmp/summary_output.md
+
+      - name: Pytest
+        run: |
+          (
+            echo ""
+            echo "## just pytest"
+            echo "<details>"
+            echo "<summary>Click to expand pytest output</summary>"
+            echo ""
+            echo '```'
+            PYOPT="-q" just pytest-cov 2>&1 | tee /tmp/pytest_output.log
+            echo '```'
+            echo "</details>"
+          ) >> /tmp/summary_output.md
+
+      - name: SecurityCheck
+        run: |
+          (
+            echo ""
+            echo "## just pysecurity-check"
+            echo "<details>"
+            echo "<summary>Click to expand security check output</summary>"
+            echo ""
+            echo '```'
+            just pysecurity-check 2>&1 | tee /tmp/security_output.log
+            echo '```'
+            echo "</details>"
+          ) >> /tmp/summary_output.md
+
+      - name: Write Summary
+        run: |
+          echo "=== Writing to GITHUB_STEP_SUMMARY ==="
+          cat /tmp/summary_output.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Debug Summary (act only)
+        if: github.actor == 'nektos/act'
+        run: |
+          echo "*************** DEBUG ***"
+          cat /tmp/summary_output.md
+          echo "*************** DEBUG ***"

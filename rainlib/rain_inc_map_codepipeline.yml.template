@@ -1,0 +1,6 @@
+AccountToParams:
+  "0123456789012":
+    EnableNotification: false
+    ChatBotName: DummyChannel
+    SlackWorkspaceId: T1234567890  # TODO: 実際のSlackワークスペースIDに変更
+    SlackChannelId: C1234567890    # TODO: 実際のSlackチャンネルIDに変更
