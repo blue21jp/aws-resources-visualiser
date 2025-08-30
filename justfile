@@ -10,6 +10,7 @@ RAINCMD := env_var_or_default("RAINCMD", "rain_lint")
 STACK_PREFIX := "AwsResourceVisualizer"
 
 # Python関連の環境変数
+export PYPROJECT := `basename $PWD`
 export REQUIREMENTS_TXT := "requirements.txt"
 
 # ECR関連の環境変数
